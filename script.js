@@ -9,11 +9,7 @@ let myChart = null;
 // ==========================================
 if (typeof db !== "undefined") {
     db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
-        if (err.code === 'failed-precondition') {
-            console.log('Multiple tabs open, persistence enabled in first tab.');
-        } else if (err.code === 'unimplemented') {
-            console.log('Browser does not support offline persistence.');
-        }
+        // Handled silently
     });
 }
 
@@ -326,17 +322,12 @@ function saveExpenseToFirebase(expenseObj) {
     }
 }
 
-// 🎯 FIX: FIREBASE से सिंगल एक्सपेंस डिलीट करने के लिए
 function deleteExpenseFromFirebase(id) {
     if (typeof db !== "undefined") {
         if (currentUser) {
-            db.collection("users").doc(currentUser.uid).collection("expenses").doc(String(id)).delete()
-                .then(() => console.log("User Expense Deleted from Firebase"))
-                .catch(err => console.error("Error deleting user expense: ", err));
+            db.collection("users").doc(currentUser.uid).collection("expenses").doc(String(id)).delete();
         }
-        db.collection("सामान").doc(String(id)).delete()
-            .then(() => console.log("Global Expense Deleted from Firebase"))
-            .catch(err => console.error("Error deleting global expense: ", err));
+        db.collection("सामान").doc(String(id)).delete();
     }
 }
 
@@ -355,7 +346,6 @@ function loadExpensesFromFirebase() {
                 });
             });
 
-            // फायरबेस से डेटा तभी सिंक करें जब फायरबेस में कोई डेटा हो
             if (firebaseExpenses.length > 0) {
                 expenses = firebaseExpenses;
                 localStorage.setItem('expenses', JSON.stringify(expenses));
@@ -560,7 +550,6 @@ function initFeatures() {
         document.getElementById('downloadGroupPdfBtn').onclick = generateGroupPDF;
     }
 
-    // 🎯 Clear All Button (केवल इस पर क्लिक करने से ही सब कुछ हटेगा)
     if (document.getElementById('clearAllBtn')) {
         document.getElementById('clearAllBtn').onclick = () => {
             if (confirm('क्या आप अपना पूरा डेटा और ग्रुप डिलीट करना चाहते हैं?')) {
@@ -688,22 +677,13 @@ function startEditExpense(id) {
     document.getElementById('cancelEditBtn').style.display = 'inline-block';
 }
 
-// 🎯 FIX: केवल एक सिंगल खर्च (Expense) डिलीट करने का फंक्शन
 function deleteExp(id) {
     if (confirm('क्या आप इस खर्च को हटाना चाहते हैं?')) {
-        // 1. एरे में से केवल उसी ID वाली आइटम को फ़िल्टर करके हटाएँ
         expenses = expenses.filter(i => String(i.id) !== String(id));
-
-        // 2. LocalStorage में नया एरे अपडेट करें
         localStorage.setItem('expenses', JSON.stringify(expenses));
-
-        // 3. Firebase Database से भी इस विशिष्ट id को डिलीट करें
         deleteExpenseFromFirebase(id);
-
-        // 4. UI और Dashboard तुरंत अपडेट करें
         renderExpenses();
         updateDashboard();
-
         showToast('info', 'खर्च सफलतापूर्वक हटा दिया गया');
     }
 }
