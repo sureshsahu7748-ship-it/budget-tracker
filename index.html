@@ -9,10 +9,10 @@
     <link rel="apple-touch-icon" href="logo.svg">
 
     <meta name="theme-color" content="#4f46e5">
-    <meta name="description" content="ProCase Manager - A smart personal expense tracker and budget management app with Firebase sync.">
 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="ProCash Manager - स्मार्ट बजट ट्रैकर, व्यक्तिगत खर्च प्रबंधन एवं दोस्तों के ग्रुप स्प्लिट ऐप।">
     <title>प्रोकैश मैनेजर - बजट, पर्सनल एवं ग्रुप स्प्लिट</title>
     <!-- PWA Manifest & Theme Color -->
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -289,7 +289,9 @@
       <p style="margin-top: 8px;">
         <a href="privacy.html" style="color: #4f46e5; text-decoration: none; margin-right: 15px;">Privacy Policy</a>
         <a href="terms.html" style="color: #4f46e5; text-decoration: none;">Terms & Conditions</a>
-      
+      </p>
+    </footer>
+</div>
 
     <!-- Firebase Configuration and Firestore Initialization -->
     <script>
@@ -308,14 +310,13 @@
       }
 
       const db = firebase.firestore();
-      console.log("Firebase & Firestore सफलतापूर्वक कनेक्ट हो गए हैं!");
     </script>
     <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js')
-          .then((reg) => console.log('Service Worker Registered!', reg.scope))
-          .catch((err) => console.log('Service Worker Failed:', err));
+          .then((reg) => {})
+          .catch((err) => {});
       });
     }
     </script>
