@@ -1,67 +1,69 @@
- const CACHE_NAME = 'procash-v13'; // Version upgrade
-const assetsToCache = [
+const CACHE_NAME = 'procash-v14';
+
+// 📌 ऐप की सभी लोकल फाइल्स और external libraries
+const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
-  '/style.css',
-  '/script.js',
-  '/logo.svg', // <-- यहाँ लोगो ऐड करें
-  '/legal-style.css',
   '/privacy.html',
   '/terms.html',
-  '/legal-style.css',
+  '/style.css',
+  '/script.js',
   '/manifest.json',
-  '/robots.txt',
-  '/service-worker.js',
-  '/_redirects',
-  '/sitemap.xml'
-  
+  '/logo.svg',
+  // Firebase CDN Libraries (अगर यह भी ऑफलाइन सपोर्ट चाहिए)
+  'https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js',
+  'https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js',
+  'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js',
+  // Other External Libraries
+  'https://cdn.jsdelivr.net/npm/chart.js',
+  'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
+  'https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css',
+  'https://cdn.jsdelivr.net/npm/sweetalert2@11'
 ];
-  
 
-// Install Event
+// 1. Install Event - सभी फ़ाइलों को कैशे में सेव करना
 self.addEventListener('install', (event) => {
-  self.skipWaiting(); // तुरंत नया सर्विस वर्कर लागू करे
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(assetsToCache);
+      return cache.addAll(ASSETS_TO_CACHE);
     })
   );
+  self.skipWaiting();
 });
 
-// Activate Event - पुराना कैशे साफ़ करने के लिए
+// 2. Activate Event - पुराना कैशे (v12 आदि) हटाना
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((cache) => {
           if (cache !== CACHE_NAME) {
-            console.log('Clearing old cache:', cache);
             return caches.delete(cache);
           }
         })
       );
     })
   );
-  return self.clients.claim();
+  self.clients.claim();
 });
 
-// Fetch Event (Network First, Cache Fallback)
+// 3. Fetch Event - नेटवर्क न होने पर कैशे से फाइल्स लोड करना
 self.addEventListener('fetch', (event) => {
   event.respondWith(
-    fetch(event.request)
-      .then((networkResponse) => {
-        // नेट से नई फाइल मिली तो कैशे अपडेट कर लो
-        if (networkResponse && networkResponse.status === 200) {
-          const responseToCache = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseToCache);
-          });
+    caches.match(event.request).then((cachedResponse) => {
+      // अगर फ़ाइल कैशे में है तो सीधे वहाँ से लोड करो
+      if (cachedResponse) {
+        return cachedResponse;
+      }
+      // अगर कैशे में नहीं है तो नेटवर्क से लाओ
+      return fetch(event.request).catch(() => {
+        // अगर पूरी तरह ऑफ़लाइन हैं और कोई HTML फ़ाइल माँगी गई है तो fallback
+        if (event.request.headers.get('accept')?.includes('text/html')) {
+          return caches.match(event.request) || caches.match('/index.html');
         }
-        return networkResponse;
-      })
-      .catch(() => {
-        // अगर इंटरनेट बंद है (Offline), तो कैशे से फाइल दिखाओ
-        return caches.match(event.request);
-      })
+      });
+    })
   );
 });
+   
