@@ -1,4 +1,4 @@
-const CACHE_NAME = 'procash-v15'; // 👈 बस यहाँ v15 या v16 कर दें ताकि फ़ोन पुराना कैशे साफ़ कर ले
+const CACHE_NAME = 'procash-v16';
 
 const assetsToCache = [
   '/',
@@ -6,6 +6,8 @@ const assetsToCache = [
   '/style.css',
   '/script.js',
   '/logo.svg',
+  '/icon-192.png', // 👈 आपकी डाउनलोड की हुई PNG फाइल
+  '/icon-512.png', // 👈 आपकी डाउनलोड की हुई PNG फाइल
   '/legal-style.css',
   '/privacy.html',
   '/terms.html',
@@ -13,10 +15,13 @@ const assetsToCache = [
   '/robots.txt',
   '/service-worker.js',
   '/_redirects',
-  '/sitemap.xml'
+  '/sitemap.xml',
+  // SweetAlert2 CDN (ऑफलाइन पॉप-अप के लिए)
+  'https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css',
+  'https://cdn.jsdelivr.net/npm/sweetalert2@11'
 ];
 
-// Install Event
+// 1. Install Event
 self.addEventListener('install', (event) => {
   self.skipWaiting();
   event.waitUntil(
@@ -26,7 +31,7 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// Activate Event - पुराना कैशे साफ़ करने के लिए
+// 2. Activate Event
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
@@ -43,7 +48,7 @@ self.addEventListener('activate', (event) => {
   return self.clients.claim();
 });
 
-// Fetch Event (Network First, Cache Fallback)
+// 3. Fetch Event (Network First, Cache Fallback)
 self.addEventListener('fetch', (event) => {
   event.respondWith(
     fetch(event.request)
