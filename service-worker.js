@@ -1,4 +1,4 @@
-const CACHE_NAME = 'procash-v16';
+const CACHE_NAME = 'procash-v18';
 
 const assetsToCache = [
   '/',
