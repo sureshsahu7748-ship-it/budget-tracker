@@ -46,11 +46,14 @@ document.addEventListener('DOMContentLoaded', () => {
     initFeatures();
     initCategoryBudgetSystem();
     initSplitSystem();
+    initGroupInviteShare();
     initAuthSystem();
+    initSidebar();
+    initProfileEditor();
+    initAppNavigation();
     renderExpenses();
     updateDashboard();
 
-    loadExpensesFromFirebase();
 
     if (document.getElementById('date')) {
         document.getElementById('date').valueAsDate = new Date();
@@ -237,6 +240,10 @@ function initAuthSystem() {
     const logoutBtn = document.getElementById('logoutBtn');
     const userInfo = document.getElementById('userInfo');
     const userName = document.getElementById('userName');
+    const sidebarUserName = document.getElementById('sidebarUserName');
+    const sidebarUserStatus = document.getElementById('sidebarUserStatus');
+    const sidebarAvatar = document.getElementById('sidebarAvatar');
+    const profileEditBtn = document.getElementById('profileEditBtn');
 
     if (loginBtn) {
         loginBtn.onclick = () => {
@@ -258,7 +265,8 @@ function initAuthSystem() {
             firebase.auth().signInWithPopup(provider)
                 .then((result) => {
                     if (typeof Swal !== "undefined") Swal.close();
-                    showToast('success', `स्वागत है ${result.user.displayName}!`);
+                    showToast('success', `स्वागत है ${result.user.displayName || 'यूज़र'}!`);
+                    closeSidebar();
                 })
                 .catch((error) => {
                     if (typeof Swal !== "undefined") Swal.close();
@@ -269,9 +277,23 @@ function initAuthSystem() {
 
     if (logoutBtn) {
         logoutBtn.onclick = () => {
+            if (typeof firebase === "undefined" || !firebase.auth) {
+                return showToast('error', 'Firebase लोड नहीं हुआ है!');
+            }
             firebase.auth().signOut().then(() => {
                 showToast('info', "लॉगआउट सफल!");
+                closeSidebar();
+            }).catch((error) => {
+                showToast('error', 'लॉगआउट असफल: ' + error.message);
             });
+        };
+    }
+
+    // 👤 प्रोफ़ाइल एडिट हमेशा clickable रहेगा
+    if (profileEditBtn) {
+        profileEditBtn.style.display = 'flex';
+        profileEditBtn.onclick = () => {
+            openProfileModal();
         };
     }
 
@@ -279,9 +301,19 @@ function initAuthSystem() {
         firebase.auth().onAuthStateChanged((user) => {
             if (user) {
                 currentUser = user;
+
+                processPendingGroupInvite();
+
                 if (loginBtn) loginBtn.style.display = 'none';
+                if (logoutBtn) logoutBtn.style.display = 'flex';
+                if (profileEditBtn) profileEditBtn.style.display = 'flex';
                 if (userInfo) userInfo.style.display = 'flex';
-                if (userName) userName.textContent = user.displayName;
+                if (userName) userName.textContent = user.displayName || 'यूज़र';
+
+                const displayName = user.displayName || 'Google यूज़र';
+                if (sidebarUserName) sidebarUserName.textContent = displayName;
+                if (sidebarUserStatus) sidebarUserStatus.textContent = user.email || 'Google से लॉगिन';
+                if (sidebarAvatar) sidebarAvatar.textContent = getInitial(displayName);
 
                 loadUserExpensesFromFirebase(user.uid);
                 if (activeGroup && activeGroup.name) {
@@ -289,114 +321,609 @@ function initAuthSystem() {
                 }
             } else {
                 currentUser = null;
-                if (loginBtn) loginBtn.style.display = 'inline-block';
+
+                if (loginBtn) loginBtn.style.display = 'flex';
+                if (logoutBtn) logoutBtn.style.display = 'none';
+                if (profileEditBtn) profileEditBtn.style.display = 'flex';
                 if (userInfo) userInfo.style.display = 'none';
+
+                if (sidebarUserName) sidebarUserName.textContent = 'गेस्ट यूज़र';
+                if (sidebarUserStatus) sidebarUserStatus.textContent = 'लॉगिन नहीं है';
+                if (sidebarAvatar) sidebarAvatar.textContent = '👤';
             }
         });
+    }
+}
+
+// ==========================================
+// ☰ SIDEBAR + PROFILE EDIT
+// ==========================================
+function initSidebar() {
+    const menuToggle = document.getElementById('menuToggle');
+    const closeBtn = document.getElementById('closeSidebar');
+    const overlay = document.getElementById('sidebarOverlay');
+    const sidebar = document.getElementById('appSidebar');
+    const backupBtn = document.getElementById('backupBtn');
+    const restoreBtn = document.getElementById('restoreBtn');
+
+    if (menuToggle) menuToggle.onclick = openSidebar;
+    if (closeBtn) closeBtn.onclick = closeSidebar;
+    if (overlay) overlay.onclick = closeSidebar;
+
+    // Sidebar में किसी भी action पर पहले sidebar बंद होगा, फिर action चलेगा।
+    if (sidebar) {
+        sidebar.addEventListener('click', (e) => {
+            const interactive = e.target.closest('button, a, input, select, textarea, label');
+            if (!interactive) return;
+            if (interactive.id === 'closeSidebar') return;
+
+            closeSidebar();
+        });
+    }
+
+    if (backupBtn) {
+        backupBtn.onclick = () => {
+            if (typeof backupDataToCloud === 'function') {
+                backupDataToCloud();
+            } else {
+                showToast('warning', 'Cloud Backup function अभी उपलब्ध नहीं है।');
+            }
+        };
+    }
+
+    if (restoreBtn) {
+        restoreBtn.onclick = () => {
+            if (typeof restoreDataFromCloud === 'function') {
+                restoreDataFromCloud();
+            } else {
+                showToast('warning', 'Cloud Restore function अभी उपलब्ध नहीं है।');
+            }
+        };
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            closeSidebar();
+            closeProfileModal();
+        }
+    });
+}
+
+function openSidebar() {
+    const sidebar = document.getElementById('appSidebar');
+    const overlay = document.getElementById('sidebarOverlay');
+    if (sidebar) sidebar.classList.add('open');
+    if (overlay) overlay.classList.add('open');
+    document.body.style.overflow = 'hidden';
+}
+
+function closeSidebar() {
+    const sidebar = document.getElementById('appSidebar');
+    const overlay = document.getElementById('sidebarOverlay');
+    if (sidebar) sidebar.classList.remove('open');
+    if (overlay) overlay.classList.remove('open');
+    document.body.style.overflow = '';
+}
+
+function getInitial(name) {
+    const clean = String(name || '').trim();
+    return clean ? clean.charAt(0).toUpperCase() : '👤';
+}
+
+function openProfileModal() {
+    if (!currentUser) {
+        return showToast('warning', 'प्रोफ़ाइल एडिट करने के लिए पहले Google से लॉगिन करें।');
+    }
+
+    const modal = document.getElementById('profileModal');
+    const input = document.getElementById('profileNameInput');
+    if (!modal || !input) return;
+
+    input.value = currentUser.displayName || '';
+
+    // Sidebar पूरी तरह बंद होने के बाद modal खोलें, ताकि modal sidebar के पीछे न जाए।
+    closeSidebar();
+    setTimeout(() => {
+        modal.style.display = 'flex';
+        input.focus();
+    }, 180);
+}
+
+function closeProfileModal() {
+    const modal = document.getElementById('profileModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function initProfileEditor() {
+    const saveBtn = document.getElementById('saveProfileBtn');
+    const closeBtn = document.getElementById('closeProfileModal');
+    const modal = document.getElementById('profileModal');
+    const profileBox = document.getElementById('sidebarProfile');
+    const profileEditBtn = document.getElementById('profileEditBtn');
+
+    // पूरा Profile DIV clickable: avatar/name/status पर tap करने से भी editor खुलेगा
+    if (profileBox) {
+        profileBox.onclick = (event) => {
+            // अंदर का अलग Edit button हो तो उसका click दोबारा trigger न हो
+            if (profileEditBtn && profileEditBtn.contains(event.target)) return;
+            openProfileModal();
+        };
+    }
+
+    if (profileEditBtn) {
+        profileEditBtn.onclick = (event) => {
+            event.stopPropagation();
+            openProfileModal();
+        };
+    }
+
+    if (closeBtn) closeBtn.onclick = closeProfileModal;
+    if (modal) {
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) closeProfileModal();
+        });
+    }
+
+    if (saveBtn) {
+        saveBtn.onclick = () => {
+            if (!currentUser) {
+                return showToast('warning', 'पहले Google से लॉगिन करें।');
+            }
+
+            const input = document.getElementById('profileNameInput');
+            const newName = input ? input.value.trim() : '';
+
+            if (!newName) {
+                return showToast('warning', 'नाम खाली नहीं हो सकता!');
+            }
+
+            saveBtn.disabled = true;
+            currentUser.updateProfile({ displayName: newName })
+                .then(() => {
+                    const sidebarUserName = document.getElementById('sidebarUserName');
+                    const sidebarAvatar = document.getElementById('sidebarAvatar');
+                    const userName = document.getElementById('userName');
+
+                    if (sidebarUserName) sidebarUserName.textContent = newName;
+                    if (sidebarAvatar) sidebarAvatar.textContent = getInitial(newName);
+                    if (userName) userName.textContent = newName;
+
+                    showToast('success', 'प्रोफ़ाइल नाम अपडेट हो गया!');
+                    closeProfileModal();
+                })
+                .catch((error) => {
+                    showToast('error', 'प्रोफ़ाइल अपडेट असफल: ' + error.message);
+                })
+                .finally(() => {
+                    saveBtn.disabled = false;
+                });
+        };
     }
 }
 
 // ==========================================
 // 🔥 FIREBASE & CLOUD BACKUP
 // ==========================================
+let expenseUnsubscribe = null;
+let groupUnsubscribe = null;
+
 function saveExpenseToFirebase(expenseObj) {
-    if (typeof db !== "undefined") {
-        if (currentUser) {
-            db.collection("users").doc(currentUser.uid).collection("expenses").doc(String(expenseObj.id)).set({
-                id: expenseObj.id,
-                desc: expenseObj.desc,
-                amount: expenseObj.amount,
-                date: expenseObj.date,
-                category: expenseObj.category,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp()
-            });
-        }
-        db.collection("सामान").doc(String(expenseObj.id)).set({
-            id: expenseObj.id,
-            desc: expenseObj.desc,
-            amount: expenseObj.amount,
-            date: expenseObj.date,
-            category: expenseObj.category,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-    }
+    if (typeof db === "undefined" || !currentUser) return;
+
+    db.collection("users")
+      .doc(currentUser.uid)
+      .collection("expenses")
+      .doc(String(expenseObj.id))
+      .set({
+          id: expenseObj.id,
+          desc: expenseObj.desc,
+          amount: expenseObj.amount,
+          date: expenseObj.date,
+          category: expenseObj.category,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      })
+      .catch((error) => {
+          console.error('Expense save failed:', error);
+          showToast('error', 'Cloud में खर्च सेव नहीं हो पाया।');
+      });
 }
 
 function deleteExpenseFromFirebase(id) {
-    if (typeof db !== "undefined") {
-        if (currentUser) {
-            db.collection("users").doc(currentUser.uid).collection("expenses").doc(String(id)).delete();
-        }
-        db.collection("सामान").doc(String(id)).delete();
-    }
+    if (typeof db === "undefined" || !currentUser) return;
+
+    db.collection("users")
+      .doc(currentUser.uid)
+      .collection("expenses")
+      .doc(String(id))
+      .delete()
+      .catch((error) => {
+          console.error('Expense delete failed:', error);
+          showToast('error', 'Cloud से खर्च हट नहीं पाया।');
+      });
 }
 
 function loadExpensesFromFirebase() {
-    if (typeof db !== "undefined") {
-        db.collection("सामान").onSnapshot((snapshot) => {
-            let firebaseExpenses = [];
+    if (typeof db === "undefined" || !currentUser) return;
+
+    if (typeof expenseUnsubscribe === 'function') {
+        expenseUnsubscribe();
+    }
+
+    expenseUnsubscribe = db.collection("users")
+        .doc(currentUser.uid)
+        .collection("expenses")
+        .onSnapshot((snapshot) => {
+            const firebaseExpenses = [];
+
             snapshot.forEach((doc) => {
                 const data = doc.data();
                 firebaseExpenses.push({
                     id: data.id || Number(doc.id) || Date.now(),
-                    desc: data.desc,
-                    amount: data.amount,
-                    date: data.date,
-                    category: data.category
+                    desc: data.desc || '',
+                    amount: Number(data.amount) || 0,
+                    date: data.date || '',
+                    category: data.category || 'अन्य'
                 });
             });
 
-            if (firebaseExpenses.length > 0) {
-                expenses = firebaseExpenses;
-                localStorage.setItem('expenses', JSON.stringify(expenses));
-                renderExpenses();
-                updateDashboard();
-            }
+            expenses = firebaseExpenses;
+            localStorage.setItem('expenses', JSON.stringify(expenses));
+            renderExpenses();
+            updateDashboard();
+        }, (error) => {
+            console.error('Expense listener failed:', error);
+            showToast('error', 'Cloud data लोड नहीं हो पाया।');
         });
-    }
 }
 
 function loadUserExpensesFromFirebase(uid) {
-    if (typeof db !== "undefined") {
-        db.collection("users").doc(uid).collection("expenses").onSnapshot((snapshot) => {
-            let userExpenses = [];
-            snapshot.forEach((doc) => {
-                const data = doc.data();
-                userExpenses.push({
-                    id: data.id || Number(doc.id) || Date.now(),
-                    desc: data.desc,
-                    amount: data.amount,
-                    date: data.date,
-                    category: data.category
-                });
-            });
+    if (!uid || !currentUser || currentUser.uid !== uid) return;
+    loadExpensesFromFirebase();
+}
 
-            if (userExpenses.length > 0) {
-                expenses = userExpenses;
-                localStorage.setItem('expenses', JSON.stringify(expenses));
-                renderExpenses();
-                updateDashboard();
-            }
-        });
+// ☁️ Cloud Backup: केवल logged-in user के private document में
+async function backupDataToCloud() {
+    if (typeof db === "undefined" || !currentUser) {
+        return showToast('warning', 'Cloud Backup के लिए पहले Google से लॉगिन करें।');
+    }
+
+    try {
+        const backup = {
+            expenses: expenses,
+            userIncome: userIncome,
+            categoryBudgets: categoryBudgets,
+            activeGroup: activeGroup,
+            savedAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+
+        await db.collection('users')
+            .doc(currentUser.uid)
+            .collection('backups')
+            .doc('latest')
+            .set(backup);
+
+        showToast('success', 'Cloud Backup सफल हो गया!');
+    } catch (error) {
+        console.error('Backup failed:', error);
+        showToast('error', 'Cloud Backup असफल हुआ।');
     }
 }
 
-function syncGroupToFirebase() {
-    if (typeof db !== "undefined" && activeGroup) {
-        db.collection("groups").doc(activeGroup.name).set(activeGroup);
+// ☁️ Cloud Restore: केवल logged-in user का latest backup
+async function restoreDataFromCloud() {
+    if (typeof db === "undefined" || !currentUser) {
+        return showToast('warning', 'Cloud Restore के लिए पहले Google से लॉगिन करें।');
+    }
+
+    try {
+        const doc = await db.collection('users')
+            .doc(currentUser.uid)
+            .collection('backups')
+            .doc('latest')
+            .get();
+
+        if (!doc.exists) {
+            return showToast('info', 'कोई Cloud Backup नहीं मिला।');
+        }
+
+        const data = doc.data() || {};
+
+        if (Array.isArray(data.expenses)) {
+            expenses = data.expenses;
+            localStorage.setItem('expenses', JSON.stringify(expenses));
+        }
+
+        if (typeof data.userIncome === 'number') {
+            userIncome = data.userIncome;
+            localStorage.setItem('userIncome', String(userIncome));
+        }
+
+        if (data.categoryBudgets && typeof data.categoryBudgets === 'object') {
+            categoryBudgets = data.categoryBudgets;
+            localStorage.setItem('categoryBudgets', JSON.stringify(categoryBudgets));
+        }
+
+        if (data.activeGroup) {
+            activeGroup = data.activeGroup;
+            localStorage.setItem('activeGroup', JSON.stringify(activeGroup));
+        }
+
+        renderExpenses();
+        updateDashboard();
+        if (typeof showActiveGroupUI === 'function' && activeGroup) showActiveGroupUI();
+
+        showToast('success', 'Cloud Backup Restore हो गया!');
+    } catch (error) {
+        console.error('Restore failed:', error);
+        showToast('error', 'Cloud Restore असफल हुआ।');
     }
 }
 
-function listenToGroupSync(groupName) {
-    if (typeof db !== "undefined") {
-        db.collection("groups").doc(groupName).onSnapshot((doc) => {
-            if (doc.exists) {
-                activeGroup = doc.data();
+
+// ==========================================
+// 👥 SECURE GROUP INVITE / SHARE
+// ==========================================
+function generateInviteToken() {
+    const bytes = new Uint8Array(24);
+    if (window.crypto && crypto.getRandomValues) {
+        crypto.getRandomValues(bytes);
+        return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    }
+    return `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function getCurrentGroupId() {
+    return activeGroup && activeGroup.groupId ? activeGroup.groupId : (activeGroup ? activeGroup.name : null);
+}
+
+function buildGroupInviteLink() {
+    if (!activeGroup || !activeGroup.inviteToken) return null;
+    const base = `${window.location.origin}${window.location.pathname}`;
+    const params = new URLSearchParams({
+        join: getCurrentGroupId(),
+        token: activeGroup.inviteToken
+    });
+    return `${base}?${params.toString()}`;
+}
+
+async function copyInviteLink(link) {
+    try {
+        await navigator.clipboard.writeText(link);
+        showToast('success', 'Invite link कॉपी हो गई!');
+        return true;
+    } catch (e) {
+        const temp = document.createElement('textarea');
+        temp.value = link;
+        temp.style.position = 'fixed';
+        temp.style.opacity = '0';
+        document.body.appendChild(temp);
+        temp.select();
+        let copied = false;
+        try { copied = document.execCommand('copy'); } catch (_) {}
+        temp.remove();
+        if (copied) showToast('success', 'Invite link कॉपी हो गई!');
+        return copied;
+    }
+}
+
+function initGroupInviteShare() {
+    const inviteBtn = document.getElementById('inviteGroupBtn');
+    const shareBtn = document.getElementById('shareGroupBtn');
+
+    if (inviteBtn) {
+        inviteBtn.onclick = async () => {
+            if (!currentUser) return showToast('warning', 'Invite भेजने के लिए पहले Google से लॉगिन करें।');
+            if (!activeGroup) return showToast('warning', 'पहले Group बनाएं।');
+
+            if (!activeGroup.inviteToken) {
+                activeGroup.inviteToken = generateInviteToken();
+                activeGroup.groupId = activeGroup.groupId || activeGroup.name;
+                activeGroup.ownerUid = activeGroup.ownerUid || currentUser.uid;
+                activeGroup.memberUids = Array.isArray(activeGroup.memberUids) && activeGroup.memberUids.length
+                    ? activeGroup.memberUids
+                    : [activeGroup.ownerUid];
+                await syncGroupToFirebase();
                 localStorage.setItem('activeGroup', JSON.stringify(activeGroup));
-                showActiveGroupUI();
             }
-        });
+
+            const link = buildGroupInviteLink();
+            if (!link) return showToast('error', 'Invite link नहीं बन पाई।');
+
+            if (navigator.share) {
+                try {
+                    await navigator.share({
+                        title: `ProCash Manager — ${activeGroup.name}`,
+                        text: `“${activeGroup.name}” Group में जुड़ने के लिए इस लिंक को खोलें।`,
+                        url: link
+                    });
+                    return;
+                } catch (e) {
+                    if (e && e.name === 'AbortError') return;
+                }
+            }
+
+            if (typeof Swal !== 'undefined') {
+                Swal.fire({
+                    title: '👤 Group Invite',
+                    html: `<p style="font-size:.9rem;">यह लिंक सिर्फ उस व्यक्ति को भेजें जिसे आप Group में जोड़ना चाहते हैं।</p>
+                           <input id="groupInviteLinkInput" class="swal2-input" value="${link.replace(/"/g, '&quot;')}" readonly>`,
+                    showCancelButton: true,
+                    confirmButtonText: '🔗 लिंक कॉपी करें',
+                    cancelButtonText: 'बंद करें',
+                    preConfirm: () => copyInviteLink(link)
+                });
+            } else {
+                await copyInviteLink(link);
+            }
+        };
     }
+
+    if (shareBtn) {
+        shareBtn.onclick = async () => {
+            if (!currentUser) return showToast('warning', 'Share करने के लिए पहले Google से लॉगिन करें।');
+            if (!activeGroup) return showToast('warning', 'पहले Group बनाएं।');
+
+            if (!activeGroup.inviteToken) {
+                activeGroup.inviteToken = generateInviteToken();
+                activeGroup.groupId = activeGroup.groupId || activeGroup.name;
+                activeGroup.ownerUid = activeGroup.ownerUid || currentUser.uid;
+                activeGroup.memberUids = Array.isArray(activeGroup.memberUids) && activeGroup.memberUids.length
+                    ? activeGroup.memberUids
+                    : [activeGroup.ownerUid];
+                await syncGroupToFirebase();
+            }
+            const link = buildGroupInviteLink();
+            if (!link) return showToast('warning', 'Share link नहीं बन पाई।');
+
+            if (navigator.share) {
+                try {
+                    await navigator.share({
+                        title: `ProCash Manager — ${activeGroup.name}`,
+                        text: `“${activeGroup.name}” Group में जुड़ने के लिए इस लिंक को खोलें।`,
+                        url: link
+                    });
+                } catch (e) {
+                    if (e && e.name !== 'AbortError') await copyInviteLink(link);
+                }
+            } else {
+                await copyInviteLink(link);
+            }
+        };
+    }
+}
+
+async function processPendingGroupInvite() {
+    const params = new URLSearchParams(window.location.search);
+    let groupId = params.get('join');
+    let token = params.get('token');
+
+    const pending = JSON.parse(localStorage.getItem('pendingGroupInvite') || 'null');
+    if ((!groupId || !token) && pending) {
+        groupId = pending.groupId;
+        token = pending.token;
+    }
+    if (!groupId || !token) return;
+
+    if (!currentUser) {
+        localStorage.setItem('pendingGroupInvite', JSON.stringify({ groupId, token }));
+        return;
+    }
+
+    try {
+        const inviteRef = db.collection('groupInvites').doc(token);
+        const inviteSnap = await inviteRef.get();
+
+        if (!inviteSnap.exists) throw new Error('INVALID_INVITE');
+
+        const invite = inviteSnap.data() || {};
+        if (invite.active !== true || invite.groupId !== groupId) {
+            throw new Error('INVALID_INVITE');
+        }
+
+        const groupRef = db.collection('groups').doc(groupId);
+
+        await db.runTransaction(async (tx) => {
+            const snap = await tx.get(groupRef);
+            if (!snap.exists) throw new Error('GROUP_NOT_FOUND');
+
+            const data = snap.data() || {};
+            if (data.inviteToken !== token) throw new Error('INVALID_INVITE');
+
+            const memberUids = Array.isArray(data.memberUids) ? [...data.memberUids] : [];
+            const members = Array.isArray(data.members) ? [...data.members] : [];
+
+            if (!memberUids.includes(currentUser.uid)) {
+                memberUids.push(currentUser.uid);
+                members.push(currentUser.displayName || currentUser.email || 'नया सदस्य');
+
+                tx.update(groupRef, {
+                    memberUids,
+                    members
+                });
+            }
+
+            activeGroup = {
+                ...data,
+                groupId: data.groupId || groupId,
+                memberUids,
+                members
+            };
+        });
+
+        localStorage.setItem('activeGroup', JSON.stringify(activeGroup));
+        localStorage.removeItem('pendingGroupInvite');
+        window.history.replaceState({}, document.title, window.location.pathname);
+        listenToGroupSync(getCurrentGroupId());
+        showActiveGroupUI();
+        showToast('success', 'आप Group में सफलतापूर्वक जुड़ गए!');
+    } catch (error) {
+        console.error('Group invite failed:', error);
+        const messages = {
+            GROUP_NOT_FOUND: 'यह Group मौजूद नहीं है।',
+            INVALID_INVITE: 'यह Invite link गलत, बंद या पुराना है।'
+        };
+        showToast('error', messages[error.message] || 'Group में जुड़ना असफल हुआ।');
+    }
+}
+
+async function syncGroupToFirebase() {
+    if (typeof db === "undefined" || !currentUser || !activeGroup) return false;
+
+    const groupId = activeGroup.groupId || activeGroup.name;
+    activeGroup.groupId = groupId;
+    activeGroup.ownerUid = activeGroup.ownerUid || currentUser.uid;
+    activeGroup.memberUids = Array.isArray(activeGroup.memberUids) && activeGroup.memberUids.length
+        ? activeGroup.memberUids
+        : [activeGroup.ownerUid];
+    activeGroup.inviteToken = activeGroup.inviteToken || generateInviteToken();
+
+    try {
+        const batch = db.batch();
+        const groupRef = db.collection("groups").doc(groupId);
+        const inviteRef = db.collection("groupInvites").doc(activeGroup.inviteToken);
+
+        batch.set(groupRef, activeGroup);
+        batch.set(inviteRef, {
+            groupId,
+            ownerUid: activeGroup.ownerUid,
+            active: true
+        }, { merge: true });
+
+        await batch.commit();
+        localStorage.setItem('activeGroup', JSON.stringify(activeGroup));
+        return true;
+    } catch (error) {
+        console.error('Group sync failed:', error);
+        showToast('error', 'Group save नहीं हुआ। Firebase Rules check करें।');
+        return false;
+    }
+}
+
+function listenToGroupSync(groupId) {
+    if (typeof db === "undefined" || !currentUser || !groupId) return;
+
+    if (typeof groupUnsubscribe === 'function') groupUnsubscribe();
+
+    groupUnsubscribe = db.collection("groups").doc(groupId).onSnapshot((doc) => {
+        if (!doc.exists) return;
+
+        const data = doc.data() || {};
+        const isOwner = data.ownerUid === currentUser.uid;
+        const isMember = Array.isArray(data.memberUids) && data.memberUids.includes(currentUser.uid);
+
+        if (!isOwner && !isMember) return;
+
+        activeGroup = {
+            ...data,
+            groupId: data.groupId || groupId,
+            memberUids: Array.isArray(data.memberUids) ? data.memberUids : (data.ownerUid ? [data.ownerUid] : [])
+        };
+        localStorage.setItem('activeGroup', JSON.stringify(activeGroup));
+        showActiveGroupUI();
+    }, (error) => {
+        console.error('Group listener failed:', error);
+        showToast('error', 'Group access की अनुमति नहीं है।');
+    });
 }
 
 // 🌙 Theme Toggle
@@ -736,6 +1263,7 @@ function renderChart() {
 
 // 👥 GROUP SPLITTER SYSTEM
 function initSplitSystem() {
+    let editingGroupExpenseId = null;
     const createGroupBtn = document.getElementById('createGroupBtn');
     const addSplitBtn = document.getElementById('addSplitExpenseBtn');
     const deleteGroupBtn = document.getElementById('deleteGroupBtn');
@@ -747,15 +1275,16 @@ function initSplitSystem() {
             const name = document.getElementById('groupName').value.trim();
             const membersInput = document.getElementById('groupMembers').value.trim();
 
+            if (!currentUser) return showToast('warning', 'Group बनाने के लिए पहले Google से लॉगिन करें।');
             if (!name || !membersInput) return showToast('warning', 'ग्रुप का नाम और सदस्य दर्ज करें!');
             const members = membersInput.split(',').map(m => m.trim()).filter(m => m.length > 0);
             if (members.length < 2) return showToast('warning', 'कम से कम 2 सदस्य दर्ज करें!');
 
-            activeGroup = { name: name, members: members, expenses: [] };
+            activeGroup = { groupId: name, name: name, members: members, memberUids: currentUser ? [currentUser.uid] : [], expenses: [], ownerUid: currentUser ? currentUser.uid : null, inviteToken: generateInviteToken() };
             localStorage.setItem('activeGroup', JSON.stringify(activeGroup));
             
             syncGroupToFirebase();
-            listenToGroupSync(name);
+            listenToGroupSync(activeGroup.groupId);
 
             showActiveGroupUI();
             showToast('success', 'ग्रुप बन गया!');
@@ -769,24 +1298,55 @@ function initSplitSystem() {
             const paidBy = document.getElementById('paidBySelect').value;
 
             if (!desc || isNaN(amount) || amount <= 0) return showToast('warning', 'सही रकम दर्ज करें!');
+            if (!activeGroup) return showToast('warning', 'पहले ग्रुप बनाएं।');
 
-            activeGroup.expenses.push({ id: Date.now(), desc, amount, paidBy });
+            if (editingGroupExpenseId !== null) {
+                const expense = activeGroup.expenses.find(e => String(e.id) === String(editingGroupExpenseId));
+                if (!expense) return showToast('error', 'खर्च नहीं मिला।');
+                expense.desc = desc;
+                expense.amount = amount;
+                expense.paidBy = paidBy;
+                editingGroupExpenseId = null;
+                showToast('success', 'खर्च अपडेट हो गया!');
+            } else {
+                activeGroup.expenses.push({ id: Date.now(), desc, amount, paidBy });
+                showToast('success', 'खर्च जुड़ गया!');
+            }
+
             localStorage.setItem('activeGroup', JSON.stringify(activeGroup));
-
             syncGroupToFirebase();
-
             document.getElementById('splitDesc').value = '';
             document.getElementById('splitAmount').value = '';
+            document.getElementById('addSplitExpenseBtn').textContent = 'ग्रुप में खर्च जोड़ें';
+            document.getElementById('cancelGroupExpenseEditBtn').style.display = 'none';
             calculateGroupSettlement();
-            showToast('success', 'खर्च जुड़ गया!');
+        };
+    }
+
+    const cancelGroupExpenseEditBtn = document.getElementById('cancelGroupExpenseEditBtn');
+    if (cancelGroupExpenseEditBtn) {
+        cancelGroupExpenseEditBtn.onclick = () => {
+            editingGroupExpenseId = null;
+            document.getElementById('splitDesc').value = '';
+            document.getElementById('splitAmount').value = '';
+            addSplitBtn.textContent = 'ग्रुप में खर्च जोड़ें';
+            cancelGroupExpenseEditBtn.style.display = 'none';
         };
     }
 
     if (deleteGroupBtn) {
-        deleteGroupBtn.onclick = () => {
+        deleteGroupBtn.onclick = async () => {
+            if (!currentUser || !activeGroup || activeGroup.ownerUid !== currentUser.uid) {
+                return showToast('error', 'सिर्फ Group Owner ही Group हटा सकता है।');
+            }
             if (confirm('क्या आप ग्रुप डिलीट करना चाहते हैं?')) {
                 if (typeof db !== "undefined" && activeGroup) {
-                    db.collection("groups").doc(activeGroup.name).delete();
+                    try {
+                        await db.collection("groups").doc(activeGroup.groupId || activeGroup.name).delete();
+                    } catch (error) {
+                        console.error('Group delete failed:', error);
+                        return showToast('error', 'Group delete नहीं हुआ।');
+                    }
                 }
                 activeGroup = null;
                 localStorage.removeItem('activeGroup');
@@ -850,8 +1410,12 @@ function calculateGroupSettlement() {
         });
 
         groupListHtml += `
-            <div style="display:flex; justify-content:space-between; font-size:0.8rem; background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; margin-top:4px;">
-                <span>🔹 <strong>${exp.desc}</strong> (${exp.paidBy}): ${currency}${exp.amount}</span>
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:0.8rem; background:rgba(255,255,255,0.05); padding:6px 8px; border-radius:4px; margin-top:4px;">
+                <span style="flex:1;">🔹 <strong>${exp.desc}</strong> (${exp.paidBy}): ${currency}${exp.amount}</span>
+                <span style="display:flex; gap:4px; flex-shrink:0;">
+                    <button type="button" class="group-expense-edit-btn" data-expense-id="${String(exp.id)}" style="background:none;border:1px solid #ffc107;color:#ffc107;border-radius:4px;padding:2px 6px;cursor:pointer;">✏️</button>
+                    <button type="button" class="group-expense-delete-btn" data-expense-id="${String(exp.id)}" style="background:none;border:1px solid #dc3545;color:#dc3545;border-radius:4px;padding:2px 6px;cursor:pointer;">🗑️</button>
+                </span>
             </div>`;
     });
     groupListHtml += `</div><hr style="margin:8px 0; border-color:#555;">`;
@@ -865,6 +1429,48 @@ function calculateGroupSettlement() {
     });
 
     reportDiv.innerHTML = groupListHtml + settlementHtml;
+
+    reportDiv.querySelectorAll('.group-expense-edit-btn').forEach(btn => {
+        btn.onclick = () => {
+            if (!currentUser) {
+                return showToast('error', 'पहले Google से लॉगिन करें।');
+            }
+            const canEditGroup = activeGroup.ownerUid === currentUser.uid ||
+                (Array.isArray(activeGroup.memberUids) && activeGroup.memberUids.includes(currentUser.uid));
+            if (!canEditGroup) {
+                return showToast('error', 'आप इस Group के सदस्य नहीं हैं।');
+            }
+            const expense = activeGroup.expenses.find(e => String(e.id) === String(btn.dataset.expenseId));
+            if (!expense) return;
+            editingGroupExpenseId = expense.id;
+            document.getElementById('splitDesc').value = expense.desc;
+            document.getElementById('splitAmount').value = expense.amount;
+            document.getElementById('paidBySelect').value = expense.paidBy;
+            document.getElementById('addSplitExpenseBtn').textContent = '💾 खर्च अपडेट करें';
+            document.getElementById('cancelGroupExpenseEditBtn').style.display = 'inline-block';
+        };
+    });
+
+    reportDiv.querySelectorAll('.group-expense-delete-btn').forEach(btn => {
+        btn.onclick = () => {
+            if (!currentUser) {
+                return showToast('error', 'पहले Google से लॉगिन करें।');
+            }
+            const canEditGroup = activeGroup.ownerUid === currentUser.uid ||
+                (Array.isArray(activeGroup.memberUids) && activeGroup.memberUids.includes(currentUser.uid));
+            if (!canEditGroup) {
+                return showToast('error', 'आप इस Group के सदस्य नहीं हैं।');
+            }
+            const expense = activeGroup.expenses.find(e => String(e.id) === String(btn.dataset.expenseId));
+            if (!expense || !confirm(`क्या आप "${expense.desc}" का खर्च हटाना चाहते हैं?`)) return;
+            activeGroup.expenses = activeGroup.expenses.filter(e => String(e.id) !== String(expense.id));
+            if (String(editingGroupExpenseId) === String(expense.id)) editingGroupExpenseId = null;
+            localStorage.setItem('activeGroup', JSON.stringify(activeGroup));
+            syncGroupToFirebase();
+            calculateGroupSettlement();
+            showToast('info', 'ग्रुप का खर्च हटा दिया गया।');
+        };
+    });
 }
 
 function generateCSV() {
@@ -913,4 +1519,58 @@ function generateGroupPDF() {
         doc.save(`${activeGroup.name}_Group_Report.pdf`);
         showToast('success', 'ग्रुप PDF डाउनलोड हो गया!');
     }
+}
+// ==========================================
+// 🧭 APP PAGE NAVIGATION — modern multi-view UI
+// ==========================================
+function initAppNavigation() {
+    const pages = Array.from(document.querySelectorAll('.app-page'));
+    const navItems = Array.from(document.querySelectorAll('[data-page]'));
+    if (!pages.length) return;
+
+    const openPage = (pageName) => {
+        const target = document.getElementById(`page-${pageName}`) ? pageName : 'dashboard';
+        pages.forEach(page => page.classList.toggle('active', page.id === `page-${target}`));
+
+        document.querySelectorAll('.page-nav-item, .sidebar-page-link').forEach(item => {
+            item.classList.toggle('active', item.dataset.page === target);
+        });
+
+        document.body.dataset.currentPage = target;
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+
+        if (target === 'reports') {
+            setTimeout(() => {
+                window.dispatchEvent(new Event('resize'));
+                if (typeof updateDashboard === 'function') updateDashboard();
+            }, 80);
+        }
+
+        if (typeof closeSidebar === 'function') closeSidebar();
+    };
+
+    navItems.forEach(item => {
+        item.addEventListener('click', (event) => {
+            const target = event.currentTarget.dataset.page;
+            if (!target) return;
+            event.preventDefault();
+            openPage(target);
+        });
+    });
+
+    // Browser back/forward works like a real app.
+    window.addEventListener('popstate', () => {
+        openPage(location.hash.replace('#', '') || 'dashboard');
+    });
+
+    const initial = location.hash.replace('#', '');
+    openPage(document.getElementById(`page-${initial}`) ? initial : 'dashboard');
+
+    // Expose a tiny navigation helper for future features.
+    window.ProCashNav = { go: (page) => {
+        if (document.getElementById(`page-${page}`)) {
+            history.pushState({ page }, '', `#${page}`);
+            openPage(page);
+        }
+    }};
 }
