@@ -1,4 +1,4 @@
-let expenses = JSON.parse(localStorage.getItem('expenses')) || [];
+ let expenses = JSON.parse(localStorage.getItem('expenses')) || [];
 let activeGroup = JSON.parse(localStorage.getItem('activeGroup')) || null;
 let userIncome = parseFloat(localStorage.getItem('userIncome')) || 0;
 let categoryBudgets = JSON.parse(localStorage.getItem('categoryBudgets')) || {};
@@ -1573,4 +1573,88 @@ function initAppNavigation() {
             openPage(page);
         }
     }};
+}
+
+/* =========================================================
+   ProCash OCR — receipt scanner
+   ========================================================= */
+async function scanReceipt(file) {
+  if (!file) return;
+  const status = document.getElementById("scanStatus");
+  const descriptionInput =
+    document.getElementById("description") ||
+    document.getElementById("expenseDescription") ||
+    document.querySelector('input[name="description"]');
+  const amountInput =
+    document.getElementById("amount") ||
+    document.getElementById("expenseAmount") ||
+    document.querySelector('input[name="amount"]');
+
+  if (status) status.textContent = "रसीद पढ़ी जा रही है…";
+
+  try {
+    if (typeof Tesseract === "undefined") {
+      throw new Error("OCR library उपलब्ध नहीं है");
+    }
+
+    const result = await Tesseract.recognize(file, "eng", {
+      logger: m => {
+        if (status && typeof m.progress === "number") {
+          status.textContent = `रसीद पढ़ी जा रही है… ${Math.round(m.progress * 100)}%`;
+        }
+      }
+    });
+
+    const text = (result?.data?.text || "").replace(/\s+/g, " ").trim();
+    if (!text) throw new Error("रसीद से text नहीं मिला");
+
+    // Prefer currency-labelled values, then common decimal/integer amounts.
+    const amountMatches = text.match(
+      /(?:₹|rs\.?|inr)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)|(?:total|amount|grand\s*total|net\s*amount)\s*[:\-]?\s*(?:₹|rs\.?|inr)?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/ig
+    );
+
+    let detectedAmount = "";
+    if (amountMatches?.length) {
+      const last = amountMatches[amountMatches.length - 1];
+      const m = last.match(/([0-9][0-9,]*(?:\.[0-9]{1,2})?)(?!.*[0-9])/);
+      if (m) detectedAmount = m[1].replace(/,/g, "");
+    }
+
+    if (amountInput && detectedAmount) amountInput.value = detectedAmount;
+    if (descriptionInput && !descriptionInput.value.trim()) {
+      const firstUseful = text.split(/\s{2,}|[|]/).find(s => s.trim().length >= 3);
+      if (firstUseful) descriptionInput.value = firstUseful.slice(0, 80);
+    }
+
+    if (status) {
+      status.textContent = detectedAmount
+        ? `OCR पूरा। राशि ₹${detectedAmount} मिली — सेव करने से पहले जाँच लें।`
+        : "OCR पूरा। राशि नहीं मिली — कृपया राशि खुद भरें।";
+    }
+    return { text, amount: detectedAmount };
+  } catch (err) {
+    console.error("OCR error:", err);
+    if (status) status.textContent = "रसीद पढ़ी नहीं जा सकी। कृपया राशि खुद भरें।";
+    return null;
+  }
+}
+
+function initReceiptScanner() {
+  const input =
+    document.getElementById("receiptInput") ||
+    document.getElementById("scanInput") ||
+    document.querySelector('input[type="file"][accept*="image"]');
+
+  if (!input || input.dataset.ocrBound === "1") return;
+  input.dataset.ocrBound = "1";
+  input.addEventListener("change", () => {
+    const file = input.files?.[0];
+    if (file) scanReceipt(file);
+  });
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initReceiptScanner);
+} else {
+  initReceiptScanner();
 }
